@@ -1,0 +1,6 @@
+INFO:Processing collection: CMMD
+DEBUG:Using selector: EpollSelector
+INFO:Processing collection: CBIS-DDSM
+DEBUG:Using selector: EpollSelector
+INFO:Processing collection: VICTRE
+DEBUG:Using selector: EpollSelector
