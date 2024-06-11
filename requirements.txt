@@ -2,9 +2,10 @@ aiohttp
 asyncio
 matplotlib
 numpy
-opencv-python
+opencv-python-headless
 pandas
 pydicom
 scikit-image
 tciaclient
 urllib3
+PyWavelets

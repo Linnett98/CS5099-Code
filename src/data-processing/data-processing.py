@@ -1,128 +1,143 @@
-# Data processing
 import os
 import pydicom
 import numpy as np
 import cv2
-from skimage.filters import median
-from skimage.restoration import denoise_wavelet
-from skimage.exposure import equalize_hist, equalize_adapthist
-from skimage import img_as_float
 import matplotlib.pyplot as plt
+from scipy.signal import wiener
+from scipy.ndimage import gaussian_filter
+from skimage import img_as_float, img_as_uint
 
-def load_dicom_images(path, num_images=10):
+def load_dicom_images(path, num_images=2):
     images = []
     for file in sorted(os.listdir(path))[:num_images]:
         if file.endswith('.dcm'):
             filepath = os.path.join(path, file)
             dicom = pydicom.dcmread(filepath)
             image = dicom.pixel_array
+            if image.dtype != np.uint16:
+                image = image.astype(np.uint16)
             images.append(image)
     return images
 
-def adaptive_fuzzy_median_filter(image, kernel_size=3):
-    """
-    Advanced adaptive fuzzy median filtering.
-    
-    Parameters:
-        image (ndarray): Input image.
-        kernel_size (int): Size of the median filter kernel. Default is 3.
-    
-    Returns:
-        ndarray: Filtered image.
-    """
-    
-    def fuzzy_membership_function(value, threshold):
-        """
-        Simple fuzzy membership function.
-        
-        Parameters:
-            value (float): Pixel intensity value.
-            threshold (float): Threshold for fuzzy membership.
-        
-        Returns:
-            float: Fuzzy membership value.
-        """
-        return 1 / (1 + np.exp(-10 * (value - threshold)))
+def apply_wiener_custom(image, noise=0.01):
+    image = img_as_float(image)
+    image += 1e-10  # Add a very small constant to avoid zero variance regions
+    wiener_filtered = wiener(image, noise=noise)
+    return img_as_uint(wiener_filtered)
 
-    def adaptive_median_filter(window):
-        """
-        Apply adaptive median filtering using fuzzy logic.
-        
-        Parameters:
-            window (ndarray): Local window of the image.
-        
-        Returns:
-            float: Filtered pixel value.
-        """
-        median_value = np.median(window)
-        deviations = np.abs(window - median_value)
-        max_deviation = np.max(deviations)
-        
-        # Fuzzy membership based on deviation
-        fuzzy_memberships = fuzzy_membership_function(deviations / max_deviation, 0.5)
-        
-        # Weighted median
-        weighted_median = np.sum(window * fuzzy_memberships) / np.sum(fuzzy_memberships)
-        
-        return weighted_median
+def apply_wiener(image, noise=None):
+    try:
+        image = img_as_float(image)
+        image += 1e-10  # Add a small constant to avoid zero variance regions
+        smoothed_image = gaussian_filter(image, sigma=1)
+        if noise is not None:
+            return img_as_uint(wiener(smoothed_image, noise=noise))
+        else:
+            return img_as_uint(wiener(smoothed_image))
+    except Exception as e:
+        print(f"Error applying Wiener filter: {e}")
+        return image
 
-    # Pad the image to handle the borders
-    padded_image = np.pad(image, pad_width=kernel_size//2, mode='reflect')
-    filtered_image = np.zeros_like(image)
-    
-    for i in range(image.shape[0]):
-        for j in range(image.shape[1]):
-            # Extract the local window
-            window = padded_image[i:i+kernel_size, j:j+kernel_size]
-            filtered_image[i, j] = adaptive_median_filter(window)
-    
-    return filtered_image
-
-def noise_removal(image):
-    denoised_wavelet = denoise_wavelet(image, multichannel=False)
-    denoised_median = median(denoised_wavelet, np.ones((3, 3)))
-    return denoised_median
+def apply_gaussian_smoothing(image, sigma=1.0):
+    return gaussian_filter(image, sigma=sigma)
 
 def normalize_image(image):
-    norm_image = (image - np.min(image)) / (np.max(image) - np.min(image))
-    return norm_image
+    norm_image = (image - np.min(image)) * (65535.0 / (np.max(image) - np.min(image)))
+    return norm_image.astype(np.uint16)
 
-def enhance_image(image):
-    image_hist_eq = equalize_hist(image)
-    image_adapthist_eq = equalize_adapthist(image)
-    return image_hist_eq, image_adapthist_eq
+def apply_clahe(image, clip_limit=2.0, tile_grid_size=(8, 8)):
+    if image.dtype != np.uint16:
+        image = np.uint16(image * 65535)
+    clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
+    return clahe.apply(image)
 
-def process_images(images):
-    processed_images = []
-    for image in images:
-        fuzzy_filtered = adaptive_fuzzy_median_filter(image)
-        noise_removed = noise_removal(fuzzy_filtered)
-        normalized = normalize_image(noise_removed)
-        hist_eq, adapthist_eq = enhance_image(normalized)
-        processed_images.append((hist_eq, adapthist_eq))
-    return processed_images
-
-def display_images(images, titles):
-    plt.figure(figsize=(15, 5))
-    for i, (image, title) in enumerate(zip(images, titles)):
-        plt.subplot(1, len(images), i + 1)
+def save_images(images, titles, output_dir):
+    os.makedirs(output_dir, exist_ok=True)
+    for image, title in zip(images, titles):
+        plt.figure()
         plt.imshow(image, cmap='gray')
         plt.title(title)
         plt.axis('off')
-    plt.show()
+        plt.savefig(os.path.join(output_dir, f'{title}.png'))
+        plt.close()
+
+def calculate_metrics(original, filtered):
+    metrics = {}
+    metrics['original_mean'] = np.mean(original)
+    metrics['filtered_mean'] = np.mean(filtered)
+    metrics['original_std'] = np.std(original)
+    metrics['filtered_std'] = np.std(filtered)
+    metrics['original_snr'] = metrics['original_mean'] / metrics['original_std']
+    metrics['filtered_snr'] = metrics['filtered_mean'] / metrics['filtered_std']
+    return metrics
+
+def save_difference_image(original, filtered, title, output_dir):
+    difference = np.abs(original - filtered)
+    plt.figure()
+    plt.imshow(difference, cmap='hot')
+    plt.title('Difference Image')
+    plt.colorbar()
+    plt.axis('off')
+    os.makedirs(output_dir, exist_ok=True)
+    plt.savefig(os.path.join(output_dir, f'{title}.png'))
+    plt.close()
 
 if __name__ == "__main__":
     cmmd_path = "/data/bl70/validate/CMMD"
     cbis_ddsm_path = "/data/bl70/validate/CBIS-DDSM"
 
-    cmmd_images = load_dicom_images(cmmd_path)
-    cbis_ddsm_images = load_dicom_images(cbis_ddsm_path)
+    cmmd_images = load_dicom_images(cmmd_path, num_images=2)
+    cbis_ddsm_images = load_dicom_images(cbis_ddsm_path, num_images=2)
 
-    cmmd_processed = process_images(cmmd_images)
-    cbis_ddsm_processed = process_images(cbis_ddsm_images)
+    output_dir = "/home/bl70/CS5099-Code/data/metadata"
 
-    for original, (hist_eq, adapthist_eq) in zip(cmmd_images, cmmd_processed):
-        display_images([original, hist_eq, adapthist_eq], ["Original", "Histogram Equalized", "Adaptive Histogram Equalized"])
+    noise_levels = [0.01, 0.1, 1.0]
+    sigma_values = [0.5, 1.0, 2.0]
+    clip_limits = [2.0, 3.0, 5.0]
+    tile_grid_sizes = [(8, 8), (16, 16)]
 
-    for original, (hist_eq, adapthist_eq) in zip(cbis_ddsm_images, cbis_ddsm_processed):
-        display_images([original, hist_eq, adapthist_eq], ["Original", "Histogram Equalized", "Adaptive Histogram Equalized"])
+    for i, cmmd_image in enumerate(cmmd_images):
+        print(f"Processing CMMD image {i+1}:")
+        save_images([cmmd_image], [f"Original_CMMD_Image_{i+1}"], output_dir)
+
+        for noise in noise_levels:
+            try:
+                wiener_filtered = apply_wiener_custom(cmmd_image, noise=noise)
+                save_images([wiener_filtered], [f"CMMD_Wiener_Filtered_{i+1}_Noise_{noise}"], output_dir)
+                metrics = calculate_metrics(cmmd_image, wiener_filtered)
+                print(f"Metrics for CMMD image {i+1} with Wiener filter (Noise {noise}): {metrics}")
+                save_difference_image(cmmd_image, wiener_filtered, f"CMMD_Difference_{i+1}_Noise_{noise}", output_dir)
+            except Exception as e:
+                print(f"Error processing Wiener filter with noise {noise}: {e}")
+
+        for sigma in sigma_values:
+            smoothed = apply_gaussian_smoothing(cmmd_image, sigma=sigma)
+            save_images([smoothed], [f"CMMD_Gaussian_Smoothed_{i+1}_Sigma_{sigma}"], output_dir)
+
+        for clip_limit in clip_limits:
+            for tile_grid_size in tile_grid_sizes:
+                clahe_applied = apply_clahe(cmmd_image, clip_limit=clip_limit, tile_grid_size=tile_grid_size)
+                save_images([clahe_applied], [f"CMMD_CLAHE_{i+1}_Clip_{clip_limit}_Grid_{tile_grid_size}"], output_dir)
+
+    for i, cbis_ddsm_image in enumerate(cbis_ddsm_images):
+        print(f"Processing CBIS-DDSM image {i+1}:")
+        save_images([cbis_ddsm_image], [f"Original_CBIS_DDSM_Image_{i+1}"], output_dir)
+
+        for noise in noise_levels:
+            try:
+                wiener_filtered = apply_wiener_custom(cbis_ddsm_image, noise=noise)
+                save_images([wiener_filtered], [f"CBIS_DDSM_Wiener_Filtered_{i+1}_Noise_{noise}"], output_dir)
+                metrics = calculate_metrics(cbis_ddsm_image, wiener_filtered)
+                print(f"Metrics for CBIS-DDSM image {i+1} with Wiener filter (Noise {noise}): {metrics}")
+                save_difference_image(cbis_ddsm_image, wiener_filtered, f"CBIS_DDSM_Difference_{i+1}_Noise_{noise}", output_dir)
+            except Exception as e:
+                print(f"Error processing Wiener filter with noise {noise}: {e}")
+
+        for sigma in sigma_values:
+            smoothed = apply_gaussian_smoothing(cbis_ddsm_image, sigma=sigma)
+            save_images([smoothed], [f"CBIS_DDSM_Gaussian_Smoothed_{i+1}_Sigma_{sigma}"], output_dir)
+
+        for clip_limit in clip_limits:
+            for tile_grid_size in tile_grid_sizes:
+                clahe_applied = apply_clahe(cbis_ddsm_image, clip_limit=clip_limit, tile_grid_size=tile_grid_size)
+                save_images([clahe_applied], [f"CBIS_DDSM_CLAHE_{i+1}_Clip_{clip_limit}_Grid_{tile_grid_size}"], output_dir)
