@@ -7,7 +7,17 @@ from scipy.signal import wiener
 from scipy.ndimage import gaussian_filter
 from skimage import img_as_float, img_as_uint
 
+print("Script is starting...")
+
+def verify_path(path):
+    if os.path.exists(path):
+        print(f"Path verified: {path}")
+    else:
+        print(f"Path does not exist: {path}")
+        exit(1)
+
 def load_dicom_images(path):
+    print(f"Loading DICOM images from: {path}")
     images = []
     patient_ids = []
     try:
@@ -21,6 +31,7 @@ def load_dicom_images(path):
                         image = image.astype(np.uint16)
                     images.append(image)
                     patient_ids.append(dicom.PatientID)
+        print(f"Loaded {len(images)} images from {path}")
     except KeyboardInterrupt:
         print("Image loading interrupted by user.")
     return images, patient_ids
@@ -90,6 +101,9 @@ if __name__ == "__main__":
         cmmd_path = "/data/bl70/validate/CMMD"
         cbis_ddsm_path = "/data/bl70/validate/CBIS-DDSM"
 
+        verify_path(cmmd_path)
+        verify_path(cbis_ddsm_path)
+
         cmmd_images, cmmd_patient_ids = load_dicom_images(cmmd_path)
         cbis_ddsm_images, cbis_ddsm_patient_ids = load_dicom_images(cbis_ddsm_path)
 
@@ -102,6 +116,7 @@ if __name__ == "__main__":
             
             for kernel_size in kernel_sizes:
                 for threshold in thresholds:
+                    print(f"Applying adaptive fuzzy median filter with kernel size {kernel_size} and threshold {threshold}")
                     fuzzy_filtered = adaptive_fuzzy_median_filter(cmmd_image, kernel_size=kernel_size, threshold=threshold)
                     normalized_fuzzy = normalize_image(fuzzy_filtered)
                     clahe_fuzzy = apply_clahe(normalized_fuzzy)
@@ -109,6 +124,7 @@ if __name__ == "__main__":
                     save_images([clahe_fuzzy], [f"CMMD_{patient_id}_Fuzzy_Kernel_{kernel_size}_Threshold_{threshold}"], output_dir)
             
             for noise in noise_levels:
+                print(f"Applying Wiener filter with noise level {noise}")
                 wiener_filtered = apply_wiener(cmmd_image, noise=noise)
                 normalized_wiener = normalize_image(wiener_filtered)
                 clahe_wiener = apply_clahe(normalized_wiener)
@@ -122,6 +138,7 @@ if __name__ == "__main__":
             
             for kernel_size in kernel_sizes:
                 for threshold in thresholds:
+                    print(f"Applying adaptive fuzzy median filter with kernel size {kernel_size} and threshold {threshold}")
                     fuzzy_filtered = adaptive_fuzzy_median_filter(cbis_ddsm_image, kernel_size=kernel_size, threshold=threshold)
                     normalized_fuzzy = normalize_image(fuzzy_filtered)
                     clahe_fuzzy = apply_clahe(normalized_fuzzy)
@@ -129,6 +146,7 @@ if __name__ == "__main__":
                     save_images([clahe_fuzzy], [f"CBIS_DDSM_{patient_id}_Fuzzy_Kernel_{kernel_size}_Threshold_{threshold}"], output_dir)
             
             for noise in noise_levels:
+                print(f"Applying Wiener filter with noise level {noise}")
                 wiener_filtered = apply_wiener(cbis_ddsm_image, noise=noise)
                 normalized_wiener = normalize_image(wiener_filtered)
                 clahe_wiener = apply_clahe(normalized_wiener)
