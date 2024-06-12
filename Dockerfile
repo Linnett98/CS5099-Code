@@ -1,20 +1,21 @@
 FROM nvcr.io/nvidia/pytorch:23.05-py3
 
-ENV DEBIAN_FRONTEND="noninteractive"
+ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update --yes && \
-    apt-get upgrade --yes && \
-    apt-get install --yes --no-install-recommends locales tzdata && \
-    echo "en_GB.UTF-8 UTF-8" > /etc/locale.gen && \
-    locale-gen && \
-    rm -rf /var/lib/apt/lists/*
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
 
-ENV PATH="/root/.local/bin:${PATH}"
+# Copy requirements file and install dependencies
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
 
-# Copy requirements.txt from your local directory
-COPY ../requirements.txt /app/requirements.txt
+# Copy the rest of the application code
+COPY . /app
 
-RUN pip3 install --user --upgrade --disable-pip-version-check pip
+# Set the working directory
+WORKDIR /app/src/data-processing
 
-RUN pip3 install --user --no-cache-dir --disable-pip-version-check --root-user-action=ignore -r /app/requirements.txt
-
+# Command to run your script
+CMD ["python", "data-processing.py"]

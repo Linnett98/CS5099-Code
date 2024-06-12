@@ -9,3 +9,5 @@ scikit-image
 tciaclient
 urllib3
 PyWavelets
+scipy
+torch
